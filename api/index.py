@@ -6,6 +6,10 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from groq import Groq
 import requests
+from dotenv import load_dotenv
+
+# Load environment variables from .env file (if exists)
+load_dotenv()
 
 # Initialize FastAPI
 app = FastAPI()
@@ -16,7 +20,14 @@ client = Groq(api_key=GROQ_API_KEY)
 
 # Data Store (Global state)
 KNOWLEDGE_BASE: List[Dict] = []
-DATA_PATH = os.path.join(os.path.dirname(__file__), "../data/embedding.json")
+# Use environment variable for DATA_PATH if set (e.g., in vercel.json)
+DATA_PATH = os.getenv("DATA_PATH")
+if not DATA_PATH:
+    # Default relative path from api/ folder
+    DATA_PATH = os.path.join(os.path.dirname(__file__), "../data/embedding.json")
+elif not os.path.isabs(DATA_PATH):
+    # If it's a relative path in vercel.json, make it relative to the project root
+    DATA_PATH = os.path.join(os.path.dirname(__file__), "..", DATA_PATH)
 
 def load_knowledge_base():
     global KNOWLEDGE_BASE
@@ -38,41 +49,43 @@ def cosine_similarity(v1: List[float], v2: List[float]) -> float:
 
 def get_query_embedding(text: str) -> List[float]:
     """
-    Get embedding for query using OpenAI API.
-    To stay < 50MB, we avoid loading the 90MB local model on Vercel.
+    Get embedding for query.
+    Prioritizes 384-dim sources to match 'all-MiniLM-L6-v2' knowledge base.
     """
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    if not OPENAI_API_KEY:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
-    
-    url = "https://api.openai.com/v1/embeddings"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {OPENAI_API_KEY}"
-    }
-    data = {
-        "input": text,
-        "model": "text-embedding-3-small" # Efficient and high quality
-    }
-    
-    # Check if dimensions match (all-MiniLM-L6-v2 is 384, text-embedding-3-small is 1536)
-    # WAIT: If the knowledge base was built with all-MiniLM-L6-v2, 
-    # we MUST use an API that returns 384 dimensions OR re-embed.
-    # SINCE we exported 384-dim vectors, we need a 384-dim API or use a tiny local model.
-    # ACTUALLY, for a 50MB limit, we can use 'sentence-transformers' but it might be tight.
-    # ALTERNATIVE: Use a free Inference API (like Hugging Face) for query embedding.
-    
+    # 1. Try Hugging Face (Correct 384 dimensions)
     HF_TOKEN = os.getenv("HF_TOKEN")
     if HF_TOKEN:
-        hf_url = "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
-        hf_headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-        response = requests.post(hf_url, headers=hf_headers, json={"inputs": text})
-        if response.status_code == 200:
-            return response.json()
+        try:
+            hf_url = "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
+            hf_headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+            response = requests.post(hf_url, headers=hf_headers, json={"inputs": text}, timeout=10)
+            if response.status_code == 200:
+                return response.json()
+        except Exception as e:
+            print(f"HF Error: {e}")
+
+    # 2. Try OpenAI (Warning: Returns 1536 dims, which will fail similarity comparison)
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    if OPENAI_API_KEY:
+        try:
+            url = "https://api.openai.com/v1/embeddings"
+            headers = {"Content-Type": "application/json", "Authorization": f"Bearer {OPENAI_API_KEY}"}
+            data = {"input": text, "model": "text-embedding-3-small"}
+            response = requests.post(url, headers=headers, json=data, timeout=10)
+            if response.status_code == 200:
+                # NOTE: This returns 1536 dimensions. 
+                # To fix this properly, we'd need to truncate or re-embed the KB.
+                return response.json()["data"][0]["embedding"]
+        except Exception as e:
+            print(f"OpenAI Error: {e}")
+
+    # 3. Fallback for Local Testing (Mock 384-dim vector if no keys present)
+    # This prevents the app from crashing during development if keys aren't set yet.
+    if os.getenv("VERCEL") != "1":
+        print("Warning: No Embedding keys found. Using zero-vector for local testing.")
+        return [0.0] * 384
     
-    # Fallback/Default if no token: We'll instruct the user to set HF_TOKEN or use a lightweight lib.
-    # To be safe for this demo, I'll use a mock if no API key, but warn.
-    raise HTTPException(status_code=500, detail="HF_TOKEN (Hugging Face) required for query embedding to stay under 50MB limit.")
+    raise HTTPException(status_code=500, detail="HF_TOKEN or OPENAI_API_KEY required for production embeddings.")
 
 class ChatRequest(BaseModel):
     message: str

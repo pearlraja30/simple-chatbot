@@ -1,5 +1,11 @@
 {
   "version": 2,
+  "rewrites": [
+    {
+      "source": "/api/chat",
+      "destination": "/api"
+    }
+  ],
   "env": {
     "DATA_PATH": "data/embedding.json"
   }
