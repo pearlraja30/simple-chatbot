@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from langchain_community.document_loaders import DirectoryLoader, Docx2txtLoader
-from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -81,10 +80,17 @@ def get_embedding_model():
     if get_openai_api_key() and OpenAIEmbeddings is not None:
         return OpenAIEmbeddings(model="text-embedding-3-small")
 
-    return HuggingFaceEmbeddings(
-        model_name="all-MiniLM-L6-v2",
-        model_kwargs={"device": "cpu"},
-    )
+    try:
+        from langchain_community.embeddings import HuggingFaceEmbeddings
+        return HuggingFaceEmbeddings(
+            model_name="all-MiniLM-L6-v2",
+            model_kwargs={"device": "cpu"},
+        )
+    except ImportError:
+        raise RuntimeError(
+            "Local embeddings (HuggingFace) require 'sentence-transformers' which exceeds Vercel limits. "
+            "Please configure 'OPENAI_API_KEY' in your Vercel Environment Variables to use OpenAI Embeddings instead."
+        )
 
 
 @lru_cache(maxsize=1)
