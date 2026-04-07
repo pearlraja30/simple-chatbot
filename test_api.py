@@ -26,7 +26,16 @@ def test_backend():
     time.sleep(3)
     
     try:
-        # 2. Test Health Check
+        # 0. Test Site Root (Should now return HTML)
+        print("🏠 Testing Site Root (/)...")
+        response = requests.get("http://127.0.0.1:8001/")
+        print(f"Root Response: {response.status_code}")
+        if response.status_code == 200 and "text/html" in response.headers.get("Content-Type", ""):
+            print("✅ Root successfully serves HTML!")
+        else:
+            print(f"❌ Root failed to serve HTML: {response.headers.get('Content-Type')}")
+
+        # 1. Test Health Check
         print("🔍 Testing /api/health...")
         response = requests.get("http://127.0.0.1:8001/api/health")
         print(f"Health Response: {response.status_code} - {response.json()}")
