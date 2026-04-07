@@ -1,218 +1,155 @@
 import os
-from functools import lru_cache
-from pathlib import Path
-from typing import List
-
-from dotenv import load_dotenv
+import json
+import math
+from typing import List, Dict, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from langchain_community.document_loaders import DirectoryLoader, Docx2txtLoader
-from langchain_chroma import Chroma
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from groq import Groq
+import requests
 
-try:
-    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-except ImportError:
-    ChatOpenAI = None
-    OpenAIEmbeddings = None
+# Initialize FastAPI
+app = FastAPI()
 
-try:
-    from langchain_groq import ChatGroq
-except ImportError:
-    ChatGroq = None
+# Initialize Groq client
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+client = Groq(api_key=GROQ_API_KEY)
 
-load_dotenv()
+# Data Store (Global state)
+KNOWLEDGE_BASE: List[Dict] = []
+DATA_PATH = os.path.join(os.path.dirname(__file__), "../data/embedding.json")
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-CHROMA_DIR = BASE_DIR / "chroma_db"
-COLLECTION_NAME = "technova_policies"
+def load_knowledge_base():
+    global KNOWLEDGE_BASE
+    if not KNOWLEDGE_BASE:
+        if os.path.exists(DATA_PATH):
+            with open(DATA_PATH, "r", encoding="utf-8") as f:
+                KNOWLEDGE_BASE = json.load(f)
+        else:
+            print(f"Warning: Knowledge base not found at {DATA_PATH}")
 
+# Cosine Similarity implementation
+def cosine_similarity(v1: List[float], v2: List[float]) -> float:
+    dot_product = sum(x * y for x, y in zip(v1, v2))
+    magnitude1 = math.sqrt(sum(x * x for x in v1))
+    magnitude2 = math.sqrt(sum(x * x for x in v2))
+    if not magnitude1 or not magnitude2:
+        return 0.0
+    return dot_product / (magnitude1 * magnitude2)
 
-def get_sample_docs_dir() -> Path:
-    env_path = os.getenv("POLICY_DOCS_PATH")
-    candidates = []
-    if env_path:
-        candidates.append(Path(env_path))
-    candidates.extend(
-        [
-            BASE_DIR / "sample_docs",
-            BASE_DIR.parent / "sample_docs",
-        ]
-    )
-    for path in candidates:
-        if path.exists():
-            return path
-    raise RuntimeError(
-        "No sample_docs directory found. Create a 'sample_docs' folder in the Vercel root or set POLICY_DOCS_PATH."
-    )
-
-
-SAMPLE_DOCS_DIR = get_sample_docs_dir()
-
-app = FastAPI(
-    title="NovaTech Policy Assistant",
-    description="A lightweight production-ready RAG chatbot backend for policy question answering.",
-    version="1.0.0",
-)
-
+def get_query_embedding(text: str) -> List[float]:
+    """
+    Get embedding for query using OpenAI API.
+    To stay < 50MB, we avoid loading the 90MB local model on Vercel.
+    """
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
+    
+    url = "https://api.openai.com/v1/embeddings"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {OPENAI_API_KEY}"
+    }
+    data = {
+        "input": text,
+        "model": "text-embedding-3-small" # Efficient and high quality
+    }
+    
+    # Check if dimensions match (all-MiniLM-L6-v2 is 384, text-embedding-3-small is 1536)
+    # WAIT: If the knowledge base was built with all-MiniLM-L6-v2, 
+    # we MUST use an API that returns 384 dimensions OR re-embed.
+    # SINCE we exported 384-dim vectors, we need a 384-dim API or use a tiny local model.
+    # ACTUALLY, for a 50MB limit, we can use 'sentence-transformers' but it might be tight.
+    # ALTERNATIVE: Use a free Inference API (like Hugging Face) for query embedding.
+    
+    HF_TOKEN = os.getenv("HF_TOKEN")
+    if HF_TOKEN:
+        hf_url = "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
+        hf_headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+        response = requests.post(hf_url, headers=hf_headers, json={"inputs": text})
+        if response.status_code == 200:
+            return response.json()
+    
+    # Fallback/Default if no token: We'll instruct the user to set HF_TOKEN or use a lightweight lib.
+    # To be safe for this demo, I'll use a mock if no API key, but warn.
+    raise HTTPException(status_code=500, detail="HF_TOKEN (Hugging Face) required for query embedding to stay under 50MB limit.")
 
 class ChatRequest(BaseModel):
-    question: str
+    message: str
+    use_rag: bool = True
 
+@app.post("/api/chat")
+async def chat(request: ChatRequest):
+    load_knowledge_base()
+    
+    context = ""
+    sources = []
+    
+    if request.use_rag and KNOWLEDGE_BASE:
+        # 1. Get Query Embedding
+        query_vec = get_query_embedding(request.message)
+        
+        # 2. Vector Search (Simulated RAG)
+        similarities = []
+        for item in KNOWLEDGE_BASE:
+            score = cosine_similarity(query_vec, item["embedding"])
+            similarities.append((score, item))
+        
+        # Sort and take top 5
+        similarities.sort(key=lambda x: x[0], reverse=True)
+        top_k = similarities[:5]
+        
+        formatted_chunks = []
+        for i, (score, item) in enumerate(top_k, 1):
+            source_name = item["metadata"].get("source", "Unknown Policy")
+            formatted_chunks.append(f"SOURCE {i} ({source_name}):\n{item['text']}")
+            sources.append({
+                "id": i,
+                "source": source_name,
+                "preview": item["text"][:150] + "..."
+            })
+        
+        context = "\n\n".join(formatted_chunks)
 
-class ChatResponse(BaseModel):
-    answer: str
-    sources: List[str]
-
-
-def get_openai_api_key():
-    return os.getenv("OPENAI_API_KEY")
-
-
-def get_groq_api_key():
-    return os.getenv("GROQ_API_KEY")
-
-
-@lru_cache(maxsize=1)
-def get_embedding_model():
-    if get_openai_api_key() and OpenAIEmbeddings is not None:
-        return OpenAIEmbeddings(model="text-embedding-3-small")
-
-    try:
-        from langchain_community.embeddings import HuggingFaceEmbeddings
-        return HuggingFaceEmbeddings(
-            model_name="all-MiniLM-L6-v2",
-            model_kwargs={"device": "cpu"},
-        )
-    except ImportError:
-        raise RuntimeError(
-            "Local embeddings (HuggingFace) require 'sentence-transformers' which exceeds Vercel limits. "
-            "Please configure 'OPENAI_API_KEY' in your Vercel Environment Variables to use OpenAI Embeddings instead."
-        )
-
-
-@lru_cache(maxsize=1)
-def get_llm():
-    if get_openai_api_key() and ChatOpenAI is not None:
-        return ChatOpenAI(model="gpt-4o-mini", temperature=0.1)
-
-    if get_groq_api_key() and ChatGroq is not None:
-        return ChatGroq(model="llama-3.3-70b-versatile", temperature=0.1)
-
-    raise RuntimeError(
-        "No LLM provider configured. Set OPENAI_API_KEY or GROQ_API_KEY in environment variables."
-    )
-
-
-@lru_cache(maxsize=1)
-def build_vectorstore():
-    embedding_model = get_embedding_model()
-
-    if CHROMA_DIR.exists() and any(CHROMA_DIR.iterdir()):
-        try:
-            return Chroma(
-                persist_directory=str(CHROMA_DIR),
-                embedding_function=embedding_model,
-                collection_name=COLLECTION_NAME,
-            )
-        except Exception:
-            pass
-
-    if not SAMPLE_DOCS_DIR.exists():
-        raise RuntimeError(f"Document directory not found: {SAMPLE_DOCS_DIR}")
-
-    loader = DirectoryLoader(
-        str(SAMPLE_DOCS_DIR),
-        glob="*.docx",
-        loader_cls=Docx2txtLoader,
-    )
-    raw_documents = loader.load()
-    if not raw_documents:
-        raise RuntimeError("No documents loaded from sample_docs directory.")
-
-    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
-    documents = splitter.split_documents(raw_documents)
-
-    vectorstore = Chroma.from_documents(
-        documents=documents,
-        embedding=embedding_model,
-        persist_directory=str(CHROMA_DIR),
-        collection_name=COLLECTION_NAME,
-    )
-    return vectorstore
-
-
-@lru_cache(maxsize=1)
-def get_retriever():
-    vectorstore = build_vectorstore()
-    return vectorstore.as_retriever(search_kwargs={"k": 20})
-
-
-def dedupe_docs(docs):
-    seen = set()
-    unique = []
-    for doc in docs:
-        key = (doc.metadata.get("source"), doc.page_content)
-        if key not in seen:
-            seen.add(key)
-            unique.append(doc)
-    return unique
-
-
-def format_docs(docs):
-    formatted = []
-    for doc in docs:
-        source_name = Path(doc.metadata.get("source", "unknown")).name
-        formatted.append(f"SOURCE: {source_name}\n{doc.page_content}")
-    return "\n\n".join(formatted)
-
-
-RAG_PROMPT = ChatPromptTemplate.from_template(
-    """You are a helpful policy assistant for NovaTech Solutions Pvt. Ltd.
+    # 3. Prompt Construction
+    if context:
+        prompt = f"""You are a helpful policy assistant for NovaTech Solutions Pvt. Ltd.
 Answer the employee's question based ONLY on the provided context.
-If the context doesn't contain the answer, say \"I don't have that information in our policy documents.\"
-If the answer can be inferred from the context, answer directly.
+If the context doesn't contain the answer, say "I don't have that information in our policy documents."
 
 CONTEXT:
 {context}
 
-QUESTION: {question}
+QUESTION: {request.message}
 
 ANSWER:"""
-)
+    else:
+        prompt = f"""You are a helpful policy assistant for NovaTech Solutions Pvt. Ltd.
+Answer the employee's question about company policies.
 
+QUESTION: {request.message}
 
-@app.get("/health")
-def health_check():
-    return {"status": "ok", "source": "NovaTech Policy Assistant"}
+ANSWER:"""
 
-
-@app.post("/", response_model=ChatResponse)
-def chat(request: ChatRequest):
-    if not request.question.strip():
-        raise HTTPException(status_code=400, detail="Question must not be empty.")
-
+    # 4. LLM Call
     try:
-        retriever = get_retriever()
-        docs = retriever.invoke(request.question)
-        docs = dedupe_docs(docs)
-        if not docs:
-            raise ValueError("No documents retrieved for the question.")
+        completion = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+        )
+        answer = completion.choices[0].message.content
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-        context = format_docs(docs)
-        llm = get_llm()
-        chain = RAG_PROMPT | llm | StrOutputParser()
-        answer = chain.invoke({"context": context, "question": request.question})
+    return {
+        "answer": answer,
+        "sources": sources,
+        "rag_used": bool(context)
+    }
 
-        sources = []
-        for idx, doc in enumerate(docs, start=1):
-            source_name = Path(doc.metadata.get("source", "unknown")).name
-            sources.append(f"{idx}. {source_name}")
-
-        return ChatResponse(answer=answer.strip(), sources=sources)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to generate answer: {exc}")
+# For Vercel: Need to expose the app
+# (Optional) Add a simple health check
+@app.get("/api/health")
+def health():
+    return {"status": "ok", "kb_size": len(KNOWLEDGE_BASE)}

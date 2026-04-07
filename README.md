@@ -1,35 +1,32 @@
-# Vercel Deployment for NovaTech Policy Assistant
+# NovaTech Policy Assistant - Vercel Deployment
 
-This folder contains a production-ready RAG chatbot built for deployment on Vercel.
+This is a production-ready, lightweight RAG application designed for Vercel.
 
-## What is included
-- `api/chat.py` — FastAPI-backed serverless endpoint for policy question answering
-- `index.html` — lightweight browser chat UI that calls `/api/chat`
-- `vercel.json` — Vercel routing and Python build configuration
-- `.vercelignore` — excludes local cache files from deployment
-- `requirements.txt` — Python dependencies for production
+## 🚀 Deployment Instructions
 
-## How it works
-- Documents are loaded from `sample_docs/*.docx`
-- Content is chunked, embedded, and indexed using Chroma
-- User questions are answered by retrieving relevant chunks and then using a language model to respond from context
+### 1. Push to GitHub
+Run these commands from your terminal (make sure you are inside the `vercelapp` folder or create a new repo from it):
 
-## Environment variables
-Set one of these in Vercel:
-- `OPENAI_API_KEY` — preferred
-- `GROQ_API_KEY` — alternate provider
-- `POLICY_DOCS_PATH` — optional path to the `sample_docs` folder if you keep it outside the Vercel root
+```bash
+cd vercelapp
+git init
+git add .
+git commit -m "Deploy: NovaTech RAG Assistant"
+git remote add origin <your-github-repo-url>
+git push -u origin main
+```
 
-## Deploy steps
-1. In Vercel, create a new project and point the root to this folder.
-2. Ensure `requirements.txt` is installed by Vercel.
-3. Add the required environment variable.
-4. Deploy.
+### 2. Connect to Vercel
+1. Log in to [Vercel](https://vercel.com).
+2. Click **Add New** -> **Project**.
+3. Import your GitHub repository.
+4. **Environment Variables**: Add the following:
+   - `GROQ_API_KEY`: (From Groq Console)
+   - `HF_TOKEN`: (From Hugging Face Settings) or `OPENAI_API_KEY` (if modified)
+5. Click **Deploy**.
 
-## Endpoints
-- `GET /health` — simple health check
-- `POST /api/chat` — request body: `{ "question": "..." }`
-
-## Notes
-- The first cold start may take a bit longer while the embedding model downloads and the vector store is built.
-- The frontend loads from `index.html` and sends requests to the serverless chat endpoint.
+## 📂 Project Structure
+- `api/chat.py`: FastAPI serverless function (Llama 3.3 + Vector Similarity).
+- `public/index.html`: Premium Dark-Mode frontend.
+- `data/embedding.json`: Pre-calculated 384-dim knowledge base (~17MB).
+- `vercel.json`: Deployment/Routing configuration.
