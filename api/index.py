@@ -91,6 +91,7 @@ class ChatRequest(BaseModel):
     message: str
     use_rag: bool = True
 
+@app.post("/chat")
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
     load_knowledge_base()
@@ -163,6 +164,8 @@ ANSWER:"""
 
 # For Vercel: Need to expose the app
 # (Optional) Add a simple health check
+@app.get("/health")
 @app.get("/api/health")
 def health():
+    load_knowledge_base()
     return {"status": "ok", "kb_size": len(KNOWLEDGE_BASE)}
