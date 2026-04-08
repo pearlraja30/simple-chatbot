@@ -54,16 +54,21 @@ def _initialize():
         else:
             print(f"Warning: Data file not found in any of {possible_paths}")
 
+def _normalize(vector: List[float]) -> List[float]:
+    """Ensures vectors are unit length for consistent cosine similarity."""
+    mag = math.sqrt(sum(x * x for x in vector))
+    if mag > 0:
+        return [x / mag for x in vector]
+    return vector
+
 def _cosine_similarity(v1: List[float], v2: List[float]) -> float:
-    """Manual cosine similarity calculation."""
+    """Robust cosine similarity between two vectors."""
     if not v1 or not v2 or len(v1) != len(v2):
         return 0.0
-    dot_product = sum(x * y for x, y in zip(v1, v2))
-    mag1 = math.sqrt(sum(x * x for x in v1))
-    mag2 = math.sqrt(sum(x * x for x in v2))
-    if not mag1 or not mag2:
-        return 0.0
-    return dot_product / (mag1 * mag2)
+    # Normalize inputs to ensure accurate comparison across different providers
+    v1_n = _normalize(v1)
+    v2_n = _normalize(v2)
+    return sum(x * y for x, y in zip(v1_n, v2_n))
 
 def _get_embedding(text: str) -> List[float]:
     """Retrieves embedding for the query from Hugging Face (384-dims)."""
@@ -130,7 +135,7 @@ def _get_answer(question: str, use_rag: bool) -> dict:
         except Exception as e:
             print(f"Search Error: {e}")
 
-    # Prompt logic
+    # Align prompt EXACTLY with Streamlit Step 8 demo
     if context:
         prompt = f"""You are a helpful policy assistant for NovaTech Solutions Pvt. Ltd.
 Answer the employee's question based ONLY on the provided context.
@@ -144,7 +149,6 @@ QUESTION: {question}
 
 ANSWER:"""
     else:
-        # Fallback if no context found or search failed
         prompt = f"""You are a helpful policy assistant for NovaTech Solutions Pvt. Ltd.
 Answer the employee's question about company policies.
 
@@ -165,7 +169,8 @@ ANSWER:"""
         "debug": {
             "kb_size": len(KNOWLEDGE_BASE),
             "context_len": len(context),
-            "source_count": len(sources)
+            "source_count": len(sources),
+            "kb_loaded": len(KNOWLEDGE_BASE) > 0
         }
     }
 
