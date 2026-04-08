@@ -14,7 +14,7 @@ load_dotenv()
 # --- CONFIGURATION ---
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 HF_TOKEN = os.getenv("HF_TOKEN")
-DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "embedding.json")
+DATA_PATH = os.path.join(os.path.dirname(__file__), "data", "embedding.json")
 
 # Singletons for reuse across warm invocations (Vercel optimization)
 KNOWLEDGE_BASE: List[Dict] = []
@@ -30,11 +30,11 @@ def _initialize():
         _groq_client = Groq(api_key=GROQ_API_KEY)
         
     if not KNOWLEDGE_BASE:
-        # Check multiple potential data paths for Vercel vs Local
+        # Check multiple potential data paths for Vercel bundle
         possible_paths = [
             DATA_PATH,
-            os.path.join(os.getcwd(), "data", "embedding.json"),
-            os.path.join(os.getcwd(), "api", "..", "data", "embedding.json")
+            os.path.join(os.getcwd(), "api", "data", "embedding.json"),
+            os.path.join(os.getcwd(), "data", "embedding.json")
         ]
         
         target_path = None

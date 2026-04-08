@@ -9,6 +9,6 @@
     { "src": "/(.*)",     "dest": "/public/$1"   }
   ],
   "env": {
-    "DATA_PATH": "data/embedding.json"
+    "DATA_PATH": "api/data/embedding.json"
   }
 }
