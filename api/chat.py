@@ -1,6 +1,7 @@
 import os
 import json
 import math
+import requests
 from typing import List
 from groq import Groq
 from dotenv import load_dotenv
@@ -11,8 +12,8 @@ load_dotenv()
 # Configuration
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MODEL_NAME = "llama-3.3-70b-versatile"
-EMBEDDING_MODEL = "nomic-embed-text-v1.5"
-DATA_PATH = os.getenv("DATA_PATH", "api/data/embedding_groq.json")
+# Back to Gold Standard 384-dim data
+DATA_FILE = "embedding.json"
 
 # Shared clients
 _groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
@@ -34,19 +35,31 @@ def _cosine_similarity(v1: List[float], v2: List[float]) -> float:
     return sum(x * y for x, y in zip(v1, v2))
 
 def _get_embedding(text: str) -> List[float]:
-    """Retrieves embedding for the query from Groq (nomic-embed-text-v1.5)."""
-    if not text or not _groq_client:
+    """Retrieves embedding from Public HF API (No Token Required for low traffic)."""
+    if not text:
         return []
 
+    # Using the standard 384-dim model to match Gold Standard embedding.json
+    API_URL = "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
+    
     try:
-        response = _groq_client.embeddings.create(
-            model=EMBEDDING_MODEL,
-            input=text
-        )
-        return _normalize(response.data[0].embedding)
+        # We don't pass an Authorization header here to satisfy the "One Key Only" rule
+        response = requests.post(API_URL, json={"inputs": text}, timeout=10)
+        
+        if response.status_code == 200:
+            res = response.json()
+            # Handle nested list [[...]] vs flat list [...]
+            if isinstance(res, list) and len(res) > 0:
+                if isinstance(res[0], list):
+                    return _normalize(res[0])
+                return _normalize(res)
+        else:
+            print(f"Public API returned {response.status_code}: {response.text}")
+            
     except Exception as e:
-        print(f"Embedding Search Error: {e}")
-        return []
+        print(f"Embedding Fetch Error: {e}")
+    
+    return []
 
 def _initialize():
     """Load the knowledge base once into memory."""
@@ -54,12 +67,12 @@ def _initialize():
     if KNOWLEDGE_BASE:
         return
 
-    # Look in possible paths for Vercel vs Local
+    # Look in possible paths for Vercel bundle
     possible_paths = [
-        os.path.join(os.path.dirname(__file__), "data/embedding_groq.json"),
-        "api/data/embedding_groq.json",
-        "vercelapp/api/data/embedding_groq.json",
-        "/var/task/api/data/embedding_groq.json"
+        os.path.join(os.path.dirname(__file__), "data", DATA_FILE),
+        os.path.join("api", "data", DATA_FILE),
+        os.path.join("vercelapp", "api", "data", DATA_FILE),
+        os.path.join(os.getcwd(), "api", "data", DATA_FILE)
     ]
     
     target_path = None
@@ -75,9 +88,8 @@ def _initialize():
                 KNOWLEDGE_BASE = json.load(f)
         except Exception as e:
             print(f"Data Load Error: {e}")
-            # Don't crash here, just log
     else:
-        print(f"Warning: Data file not found in any of {possible_paths}")
+        print(f"Warning: Data file {DATA_FILE} not found in any of {possible_paths}")
 
 def _get_answer(question: str, use_rag: bool) -> dict:
     """Optimized lightweight search + LLM generation."""
@@ -94,6 +106,7 @@ def _get_answer(question: str, use_rag: bool) -> dict:
             if query_vec:
                 scores = []
                 for item in KNOWLEDGE_BASE:
+                    # Knowledge base vectors are already normalized by the extraction script
                     score = _cosine_similarity(query_vec, item["embedding"])
                     scores.append((score, item))
                 
@@ -105,8 +118,8 @@ def _get_answer(question: str, use_rag: bool) -> dict:
                 
                 formatted_chunks = []
                 for i, (score, item) in enumerate(top_k, 1):
-                    # Filter for relevance but keep it loose for diagnostic
-                    if score > 0.1:
+                    # Filter for relevance
+                    if score > 0.15:
                         source_name = item.get("metadata", {}).get("source", "Policy Document")
                         formatted_chunks.append(f"SOURCE {i} ({source_name}):\n{item['text']}")
                         sources.append({
@@ -134,10 +147,13 @@ QUESTION: {question}
 
 ANSWER:"""
     else:
+        # Strengthened fallback prompt to avoid "empty question" hallucination
         prompt = f"""You are a helpful policy assistant for NovaTech Solutions Pvt. Ltd.
-Answer the employee's question about company policies.
+You are helping an employee with a question about company policies.
 
 QUESTION: {question}
+
+Please provide a helpful response based on general knowledge of professional company policies, but mention that you couldn't find the specific document matching this query.
 
 ANSWER:"""
 
@@ -165,7 +181,6 @@ ANSWER:"""
 
 # Handler remains similar but calls _get_answer directly
 from http.server import BaseHTTPRequestHandler
-import json
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -197,3 +212,13 @@ class handler(BaseHTTPRequestHandler):
         else:
             self.send_response(404)
             self.end_headers()
+
+if __name__ == '__main__':
+    from http.server import HTTPServer
+    port = 8001
+    server = HTTPServer(('127.0.0.1', port), handler)
+    print(f"🚀 Standalone Server running on http://127.0.0.1:{port}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        server.server_close()
