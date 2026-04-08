@@ -13,9 +13,9 @@ def test_backend():
     # Cwd should be the vercelapp folder
     cwd = "/Users/rajasekaran/Projects/course_gen_agen_ai/python_ai/rag/vercelapp"
     
-    print("📦 Starting Uvicorn server...")
+    print("📦 Starting Standalone server...")
     server_process = subprocess.Popen(
-        ["uvicorn", "api.chat:app", "--port", "8001"],
+        ["python3", "api/chat.py"],
         cwd=cwd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
