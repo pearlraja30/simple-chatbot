@@ -15,7 +15,7 @@ def test_backend():
     
     print("📦 Starting Uvicorn server...")
     server_process = subprocess.Popen(
-        ["uvicorn", "api.index:app", "--port", "8001"],
+        ["uvicorn", "api.chat:app", "--port", "8001"],
         cwd=cwd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

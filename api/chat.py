@@ -3,7 +3,6 @@ import json
 import math
 from typing import List, Dict, Optional
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 from groq import Groq
 import requests
@@ -170,34 +169,3 @@ ANSWER:"""
 def health():
     load_knowledge_base()
     return {"status": "ok", "kb_size": len(KNOWLEDGE_BASE)}
-
-# --- FAILSAFE ROUTING FOR FRONTEND ---
-# This ensures that even if Vercel routes everything to the API, 
-# the frontend is still served correctly.
-
-# 1. Base directory for static files (relative to current file in api/)
-PUBLIC_DIR = os.path.join(os.path.dirname(__file__), "..", "public")
-
-@app.get("/")
-async def serve_index():
-    index_path = os.path.join(PUBLIC_DIR, "index.html")
-    if os.path.exists(index_path):
-        return FileResponse(index_path)
-    return HTMLResponse("<h1>NovaTech Assistant</h1><p>Frontend not found. Please check deployment structure.</p>", status_code=404)
-
-@app.get("/{path:path}")
-async def serve_static(path: str):
-    # Only serve from public if it's not an API call (which should have matched above)
-    if path.startswith("api/"):
-        raise HTTPException(status_code=404, detail="API endpoint not found")
-        
-    file_path = os.path.join(PUBLIC_DIR, path)
-    if os.path.exists(file_path) and os.path.isfile(file_path):
-        return FileResponse(file_path)
-        
-    # Default to index.html for SPAs or unknown routes
-    index_path = os.path.join(PUBLIC_DIR, "index.html")
-    if os.path.exists(index_path):
-        return FileResponse(index_path)
-    
-    raise HTTPException(status_code=404, detail="Not Found")

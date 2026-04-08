@@ -1,10 +1,12 @@
 {
   "version": 2,
-  "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/api/index.py"
-    }
+  "builds": [
+    { "src": "api/chat.py", "use": "@vercel/python" },
+    { "src": "public/**",   "use": "@vercel/static"  }
+  ],
+  "routes": [
+    { "src": "/api/chat", "dest": "/api/chat.py" },
+    { "src": "/(.*)",     "dest": "/public/$1"   }
   ],
   "env": {
     "DATA_PATH": "data/embedding.json"
