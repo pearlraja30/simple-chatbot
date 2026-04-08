@@ -356,14 +356,18 @@
                     body: JSON.stringify({ message, use_rag: true })
                 });
 
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`Server Error (${response.status}): ${errorText.substring(0, 50)}...`);
+                }
+
                 const data = await response.json();
-                
                 if (data.error) throw new Error(data.error);
 
                 addMessage(data.answer, 'assistant', data.sources, data.rag_used);
             } catch (err) {
                 console.error(err);
-                addMessage(`⚠️ Error: ${err.message || "Failed to connect to the assistant."}`, 'assistant');
+                addMessage(`⚠️ Error: ${err.message}`, 'assistant');
             } finally {
                 sendBtn.disabled = false;
                 loader.style.display = 'none';
