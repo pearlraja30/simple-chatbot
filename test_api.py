@@ -17,8 +17,6 @@ def test_backend():
     server_process = subprocess.Popen(
         ["python3", "api/chat.py"],
         cwd=cwd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
         preexec_fn=os.setsid
     )
     
