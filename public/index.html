@@ -1,12 +1,15 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NovaTech Policy Assistant | RAG Chat</title>
+    <title>ABC Policy Assistant | RAG Chat</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=Inter:wght@400;500;600&display=swap"
+        rel="stylesheet">
     <style>
         :root {
             --primary: #6366f1;
@@ -81,9 +84,20 @@
         }
 
         @keyframes pulse {
-            0% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.5; transform: scale(1.2); }
-            100% { opacity: 1; transform: scale(1); }
+            0% {
+                opacity: 1;
+                transform: scale(1);
+            }
+
+            50% {
+                opacity: 0.5;
+                transform: scale(1.2);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
         }
 
         /* --- Chat Container --- */
@@ -101,9 +115,18 @@
         }
 
         /* Hide scrollbar */
-        main::-webkit-scrollbar { width: 6px; }
-        main::-webkit-scrollbar-track { background: transparent; }
-        main::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+        main::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        main::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        main::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
 
         .message {
             max-width: 80%;
@@ -116,8 +139,15 @@
         }
 
         @keyframes slideIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         .user-message {
@@ -150,12 +180,12 @@
         .sources {
             margin-top: 1rem;
             padding-top: 1rem;
-            border-top: 1px solid rgba(255,255,255,0.05);
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
             font-size: 0.8rem;
         }
 
         .source-item {
-            background: rgba(0,0,0,0.2);
+            background: rgba(0, 0, 0, 0.2);
             padding: 8px;
             border-radius: 8px;
             margin-bottom: 5px;
@@ -180,7 +210,7 @@
             padding: 8px;
             display: flex;
             gap: 10px;
-            box-shadow: 0 20px 50px -10px rgba(0,0,0,0.5);
+            box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.5);
         }
 
         textarea {
@@ -225,14 +255,16 @@
             margin-left: 8px;
             width: 16px;
             height: 16px;
-            border: 2px solid rgba(255,255,255,0.3);
+            border: 2px solid rgba(255, 255, 255, 0.3);
             border-radius: 50%;
             border-top-color: #fff;
             animation: spin 0.8s linear infinite;
         }
 
         @keyframes spin {
-            to { transform: rotate(360deg); }
+            to {
+                transform: rotate(360deg);
+            }
         }
 
         /* Empty State */
@@ -272,11 +304,14 @@
         }
     </style>
 </head>
+
 <body>
     <header>
         <div class="logo">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
-            NovaTech Assistant
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
+            </svg>
+            ABC AI Assistant
         </div>
         <div class="status-badge">
             <div class="status-dot"></div>
@@ -288,7 +323,7 @@
         <div class="empty-state">
             <h1>How can I help you today?</h1>
             <p>I can answer questions about HR, IT, and Finance policies.</p>
-            
+
             <div class="suggestions">
                 <div class="suggest-card" onclick="askSuggestion('How many leave days do I get?')">
                     <strong>HR Policy</strong>
@@ -377,7 +412,7 @@
         function addMessage(text, role, sources = [], ragUsed = false) {
             const div = document.createElement('div');
             div.className = `message ${role}-message`;
-            
+
             let html = '';
             if (role === 'assistant' && ragUsed) {
                 html += `<div class="rag-tag"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="color:#4ade80"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> RAG Search Active</div>`;
@@ -419,4 +454,5 @@
         sendBtn.addEventListener('click', sendMessage);
     </script>
 </body>
+
 </html>

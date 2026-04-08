@@ -73,7 +73,11 @@ def _get_embedding(text: str) -> List[float]:
             headers = {"Authorization": f"Bearer {HF_TOKEN}"}
             response = requests.post(url, headers=headers, json={"inputs": text}, timeout=8)
             if response.status_code == 200:
-                return response.json()
+                res = response.json()
+                # Handle nested list [[...]] vs flat list [...]
+                if isinstance(res, list) and len(res) > 0 and isinstance(res[0], list):
+                    return res[0]
+                return res
             else:
                 print(f"HF API returned {response.status_code}: {response.text}")
         except Exception as e:
@@ -157,7 +161,12 @@ ANSWER:"""
     return {
         "answer": completion.choices[0].message.content,
         "sources": sources,
-        "rag_used": bool(context)
+        "rag_used": bool(context),
+        "debug": {
+            "kb_size": len(KNOWLEDGE_BASE),
+            "context_len": len(context),
+            "source_count": len(sources)
+        }
     }
 
 class handler(BaseHTTPRequestHandler):
