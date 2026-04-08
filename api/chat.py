@@ -4,21 +4,9 @@ import json
 import math
 from http.server import BaseHTTPRequestHandler
 from typing import List, Dict, Optional
-
-# --- VERCEL SQLITE FIX ---
-# ChromaDB requires sqlite3 >= 3.35.0. 
-# We use pysqlite3-binary to override the system version on Vercel (Linux).
-if sys.platform.startswith("linux"):
-    try:
-        __import__('pysqlite3')
-        sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
-    except ImportError:
-        print("Warning: pysqlite3-binary not found. Fallback to system sqlite3.")
-
 from groq import Groq
 import requests
 from dotenv import load_dotenv
-import chromadb
 
 # Load environment variables
 load_dotenv()
@@ -27,88 +15,104 @@ load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 HF_TOKEN = os.getenv("HF_TOKEN")
 DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "embedding.json")
-COLLECTION_NAME = "novatech_policies"
 
 # Singletons for reuse across warm invocations (Vercel optimization)
-_client = None
-_collection = None
+KNOWLEDGE_BASE: List[Dict] = []
 _groq_client = None
 
 def _initialize():
-    """Initializes the in-memory ChromaDB and Groq client."""
-    global _client, _collection, _groq_client
+    """Lightweight initialization: loads JSON knowledge base once into memory."""
+    global KNOWLEDGE_BASE, _groq_client
     
     if _groq_client is None:
         if not GROQ_API_KEY:
-            raise ValueError("Configuration Error: GROQ_API_KEY not found in environment. Please add it to Vercel settings.")
+            raise ValueError("Configuration Error: GROQ_API_KEY not found in Vercel settings.")
         _groq_client = Groq(api_key=GROQ_API_KEY)
         
-    if _collection is None:
-        # 1. Start in-memory ChromaDB client
-        _client = chromadb.Client()
-        _collection = _client.create_collection(name=COLLECTION_NAME)
-        
-        # 2. Load the embedding.json
+    if not KNOWLEDGE_BASE:
         if os.path.exists(DATA_PATH):
-            with open(DATA_PATH, "r", encoding="utf-8") as f:
-                kb_data = json.load(f)
-            
-            # 3. Index data in batches for speed
-            BATCH_SIZE = 100
-            for i in range(0, len(kb_data), BATCH_SIZE):
-                batch = kb_data[i : i + BATCH_SIZE]
-                _collection.add(
-                    ids=[d.get("id", str(idx + i)) for idx, d in enumerate(batch)],
-                    embeddings=[d["embedding"] for d in batch],
-                    documents=[d["text"] for d in batch],
-                    metadatas=[{"source": d.get("metadata", {}).get("source", "Unknown")} for d in batch]
-                )
+            try:
+                with open(DATA_PATH, "r", encoding="utf-8") as f:
+                    KNOWLEDGE_BASE = json.load(f)
+            except Exception as e:
+                print(f"Data Load Error: {e}")
+                raise ValueError(f"Could not load knowledge base: {str(e)}")
         else:
             print(f"Warning: Data file not found at {DATA_PATH}")
 
+def _cosine_similarity(v1: List[float], v2: List[float]) -> float:
+    """Manual cosine similarity calculation."""
+    if not v1 or not v2 or len(v1) != len(v2):
+        return 0.0
+    dot_product = sum(x * y for x, y in zip(v1, v2))
+    mag1 = math.sqrt(sum(x * x for x in v1))
+    mag2 = math.sqrt(sum(x * x for x in v2))
+    if not mag1 or not mag2:
+        return 0.0
+    return dot_product / (mag1 * mag2)
+
 def _get_embedding(text: str) -> List[float]:
-    """Retrieves embedding for the query (384-dims)."""
+    """Retrieves embedding for the query from Hugging Face (384-dims)."""
     if HF_TOKEN:
         try:
             url = "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
             headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-            response = requests.post(url, headers=headers, json={"inputs": text}, timeout=10)
+            response = requests.post(url, headers=headers, json={"inputs": text}, timeout=8)
             if response.status_code == 200:
                 return response.json()
-        except:
-            pass
+            else:
+                print(f"HF API returned {response.status_code}: {response.text}")
+        except Exception as e:
+            print(f"Embedding Fetch Error: {e}")
             
-    # Mock fallback for local testing if no HF token
+    # Mock fallback for local testing
     if os.getenv("VERCEL") != "1":
         return [0.0] * 384
-    raise ValueError("HF_TOKEN required for production RAG search.")
+    
+    # If in Vercel and search key is missing
+    raise ValueError("HF_TOKEN required for Policy Search. Please add it to Vercel environment variables.")
 
 def _get_answer(question: str, use_rag: bool) -> dict:
-    """Core RAG logic matching the reference repo style."""
+    """Optimized lightweight search + LLM generation."""
     _initialize()
     
     context = ""
     sources = []
     
-    if use_rag and _collection and _collection.count() > 0:
+    if use_rag and KNOWLEDGE_BASE:
         try:
+            # 1. Get embedding for the question
             query_vec = _get_embedding(question)
-            results = _collection.query(query_embeddings=[query_vec], n_results=5)
+            
+            # 2. Sequential Similarity Search (Faster than Chroma index build for < 2k items)
+            # Scores list stored as (score, item)
+            scores = []
+            for item in KNOWLEDGE_BASE:
+                score = _cosine_similarity(query_vec, item["embedding"])
+                scores.append((score, item))
+            
+            # 3. Sort and take top 5
+            scores.sort(key=lambda x: x[0], reverse=True)
+            top_k = scores[:5]
             
             formatted_chunks = []
-            for i, (text, meta) in enumerate(zip(results["documents"][0], results["metadatas"][0]), 1):
-                source_name = meta.get("source", "Unknown Policy")
-                formatted_chunks.append(f"SOURCE {i} ({source_name}):\n{text}")
-                sources.append({
-                    "id": i,
-                    "source": source_name,
-                    "preview": text[:150] + "..."
-                })
-            context = "\n\n".join(formatted_chunks)
+            for i, (score, item) in enumerate(top_k, 1):
+                # Only include relevant context (score > 0.4 usually means some match)
+                if score > 0.3:
+                    source_name = item.get("metadata", {}).get("source", "Policy Document")
+                    formatted_chunks.append(f"SOURCE {i} ({source_name}):\n{item['text']}")
+                    sources.append({
+                        "id": i,
+                        "source": source_name,
+                        "preview": item["text"][:150] + "..."
+                    })
+            
+            if formatted_chunks:
+                context = "\n\n".join(formatted_chunks)
         except Exception as e:
-            print(f"RAG Error: {e}")
+            print(f"Search Error: {e}")
 
-    # Build prompt
+    # Prompt logic
     if context:
         prompt = f"""You are a helpful policy assistant for NovaTech Solutions Pvt. Ltd.
 Answer the employee's question based ONLY on the provided context.
@@ -121,6 +125,7 @@ QUESTION: {question}
 
 ANSWER:"""
     else:
+        # Fallback if no context found or search failed
         prompt = f"""You are a helpful policy assistant for NovaTech Solutions Pvt. Ltd.
 Answer the employee's question about company policies.
 
@@ -141,14 +146,13 @@ ANSWER:"""
     }
 
 class handler(BaseHTTPRequestHandler):
-    """The Vercel-compatible request handler (Classic Style)."""
+    """Vercel-optimized request handler."""
     
     def do_POST(self):
         try:
             content_length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(content_length))
             
-            # Match frontend field names (the user's index.html uses 'message')
             message = body.get("message", body.get("question", ""))
             use_rag = bool(body.get("use_rag", True))
             
@@ -162,19 +166,22 @@ class handler(BaseHTTPRequestHandler):
         except Exception as e:
             error_msg = str(e)
             print(f"Server Error: {error_msg}")
-            self._respond(500, {"error": f"Internal Server Error: {error_msg}"})
+            # Send detailed error back to frontend for debugging
+            self._respond(500, {"error": f"Backend Error: {error_msg}"})
 
     def do_GET(self):
         """Health check support."""
         if self.path == "/api/health" or self.path == "/health":
-            _initialize()
-            kb_size = _collection.count() if _collection else 0
-            self._respond(200, {"status": "ok", "kb_size": kb_size})
+            try:
+                _initialize()
+                kb_size = len(KNOWLEDGE_BASE)
+                self._respond(200, {"status": "ok", "kb_size": kb_size})
+            except Exception as e:
+                self._respond(500, {"error": str(e)})
         else:
             self._respond(404, {"error": "Not Found"})
 
     def do_OPTIONS(self):
-        """CORS support."""
         self.send_response(200)
         self._set_headers()
         self.end_headers()
@@ -194,13 +201,12 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def log_message(self, format, *args):
-        # Suppress logging for cleaner Vercel logs
         return
 
 if __name__ == "__main__":
     from http.server import HTTPServer
     server = HTTPServer(("127.0.0.1", 8001), handler)
-    print("🚀 Local test server running on http://127.0.0.1:8001")
+    print("🚀 Local Lightweight server running on http://127.0.0.1:8001")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
