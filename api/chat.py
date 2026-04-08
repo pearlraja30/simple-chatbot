@@ -1,8 +1,20 @@
 import os
+import sys
 import json
 import math
 from http.server import BaseHTTPRequestHandler
 from typing import List, Dict, Optional
+
+# --- VERCEL SQLITE FIX ---
+# ChromaDB requires sqlite3 >= 3.35.0. 
+# We use pysqlite3-binary to override the system version on Vercel (Linux).
+if sys.platform.startswith("linux"):
+    try:
+        __import__('pysqlite3')
+        sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+    except ImportError:
+        print("Warning: pysqlite3-binary not found. Fallback to system sqlite3.")
+
 from groq import Groq
 import requests
 from dotenv import load_dotenv
@@ -28,7 +40,7 @@ def _initialize():
     
     if _groq_client is None:
         if not GROQ_API_KEY:
-            raise ValueError("GROQ_API_KEY must be set in environment variables.")
+            raise ValueError("Configuration Error: GROQ_API_KEY not found in environment. Please add it to Vercel settings.")
         _groq_client = Groq(api_key=GROQ_API_KEY)
         
     if _collection is None:
@@ -148,7 +160,9 @@ class handler(BaseHTTPRequestHandler):
             self._respond(200, result)
 
         except Exception as e:
-            self._respond(500, {"error": str(e)})
+            error_msg = str(e)
+            print(f"Server Error: {error_msg}")
+            self._respond(500, {"error": f"Internal Server Error: {error_msg}"})
 
     def do_GET(self):
         """Health check support."""

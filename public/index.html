@@ -363,7 +363,7 @@
                 addMessage(data.answer, 'assistant', data.sources, data.rag_used);
             } catch (err) {
                 console.error(err);
-                addMessage("Sorry, I encountered an error. Please ensure environment keys are configured.", 'assistant');
+                addMessage(`⚠️ Error: ${err.message || "Failed to connect to the assistant."}`, 'assistant');
             } finally {
                 sendBtn.disabled = false;
                 loader.style.display = 'none';
