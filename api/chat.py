@@ -30,15 +30,29 @@ def _initialize():
         _groq_client = Groq(api_key=GROQ_API_KEY)
         
     if not KNOWLEDGE_BASE:
-        if os.path.exists(DATA_PATH):
+        # Check multiple potential data paths for Vercel vs Local
+        possible_paths = [
+            DATA_PATH,
+            os.path.join(os.getcwd(), "data", "embedding.json"),
+            os.path.join(os.getcwd(), "api", "..", "data", "embedding.json")
+        ]
+        
+        target_path = None
+        for p in possible_paths:
+            if os.path.exists(p):
+                target_path = p
+                break
+                
+        if target_path:
             try:
-                with open(DATA_PATH, "r", encoding="utf-8") as f:
+                print(f"Loading knowledge base from: {target_path}")
+                with open(target_path, "r", encoding="utf-8") as f:
                     KNOWLEDGE_BASE = json.load(f)
             except Exception as e:
                 print(f"Data Load Error: {e}")
                 raise ValueError(f"Could not load knowledge base: {str(e)}")
         else:
-            print(f"Warning: Data file not found at {DATA_PATH}")
+            print(f"Warning: Data file not found in any of {possible_paths}")
 
 def _cosine_similarity(v1: List[float], v2: List[float]) -> float:
     """Manual cosine similarity calculation."""
@@ -84,31 +98,31 @@ def _get_answer(question: str, use_rag: bool) -> dict:
             # 1. Get embedding for the question
             query_vec = _get_embedding(question)
             
-            # 2. Sequential Similarity Search (Faster than Chroma index build for < 2k items)
-            # Scores list stored as (score, item)
+            # 2. Sequential Similarity Search
             scores = []
             for item in KNOWLEDGE_BASE:
                 score = _cosine_similarity(query_vec, item["embedding"])
                 scores.append((score, item))
             
-            # 3. Sort and take top 5
+            # 3. Sort and take top 10 (Remove threshold to ensure context is always provided)
             scores.sort(key=lambda x: x[0], reverse=True)
-            top_k = scores[:5]
+            top_k = scores[:10]
             
             formatted_chunks = []
             for i, (score, item) in enumerate(top_k, 1):
-                # Only include relevant context (score > 0.4 usually means some match)
-                if score > 0.3:
-                    source_name = item.get("metadata", {}).get("source", "Policy Document")
-                    formatted_chunks.append(f"SOURCE {i} ({source_name}):\n{item['text']}")
-                    sources.append({
-                        "id": i,
-                        "source": source_name,
-                        "preview": item["text"][:150] + "..."
-                    })
+                source_name = item.get("metadata", {}).get("source", "Policy Document")
+                formatted_chunks.append(f"SOURCE {i} ({source_name}):\n{item['text']}")
+                sources.append({
+                    "id": i,
+                    "source": source_name,
+                    "score": round(score, 3),
+                    "preview": item["text"][:150] + "..."
+                })
             
             if formatted_chunks:
                 context = "\n\n".join(formatted_chunks)
+            else:
+                print("Warning: No context chunks were formatted.")
         except Exception as e:
             print(f"Search Error: {e}")
 
@@ -117,6 +131,7 @@ def _get_answer(question: str, use_rag: bool) -> dict:
         prompt = f"""You are a helpful policy assistant for NovaTech Solutions Pvt. Ltd.
 Answer the employee's question based ONLY on the provided context.
 If the context doesn't contain the answer, say "I don't have that information in our policy documents."
+If the answer can be inferred from the context, compute it and answer directly.
 
 CONTEXT:
 {context}

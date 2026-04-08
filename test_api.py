@@ -43,21 +43,19 @@ def test_backend():
         
         # 3. Test Chat Endpoint (Using Mocked Embeddings)
         print("💬 Testing /api/chat...")
-        chat_payload = {
-            "message": "What is the leaf policy?",
-            "use_rag": True
-        }
-        response = requests.post(
-            "http://127.0.0.1:8001/api/chat", 
-            json=chat_payload
-        )
+        test_query = {"message": "How many days of earned leave do I get per year?", "use_rag": True}
+        response = requests.post("http://127.0.0.1:8001/api/chat", json=test_query)
         print(f"Chat Response Status: {response.status_code}")
         if response.status_code == 200:
             data = response.json()
-            print(f"Chat Response Answer: {data.get('answer')[:100]}...")
+            print(f"Chat Response Answer: {data['answer'][:100]}...")
             print(f"RAG Used: {data.get('rag_used')}")
+            if "18" in data['answer']:
+                print("✅ TEST PASSED: AI correctly identified 18 days.")
+            else:
+                print(f"❌ TEST FAILED: AI did not mention 18 days. Answer was: {data['answer']}")
         else:
-            print(f"Error: {response.text}")
+            print(f"❌ Chat failed: {response.text}")
             
     except Exception as e:
         print(f"❌ Test Failed: {e}")
